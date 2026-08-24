@@ -1,0 +1,29 @@
+# Action1 secrets / auth material
+DadLAN-Creds.xml
+*.clixml
+.env
+.env.*
+credentials.json
+secrets.json
+
+# Local fleet metadata (contains endpoint IDs / hostnames)
+DadLAN-Machines.json
+machines.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary logs / exports
+*.log
+*.csv
+cmds.txt
+cmds_utf8.txt
