@@ -1,0 +1,12 @@
+[
+  {"laptopNumber":"01","endpointId":"","friendlyName":"Laptop #01","role":"Controller","notes":"","protected":true},
+  {"laptopNumber":"02","endpointId":"","friendlyName":"Laptop #02","role":"Worker","notes":"","protected":false},
+  {"laptopNumber":"03","endpointId":"","friendlyName":"Laptop #03","role":"Worker","notes":"","protected":false},
+  {"laptopNumber":"04","endpointId":"","friendlyName":"Laptop #04","role":"Worker","notes":"","protected":false},
+  {"laptopNumber":"05","endpointId":"","friendlyName":"Laptop #05","role":"Worker","notes":"","protected":false},
+  {"laptopNumber":"06","endpointId":"","friendlyName":"Laptop #06","role":"Worker","notes":"","protected":false},
+  {"laptopNumber":"07","endpointId":"","friendlyName":"Laptop #07","role":"Worker","notes":"","protected":false},
+  {"laptopNumber":"08","endpointId":"","friendlyName":"Laptop #08","role":"Worker","notes":"","protected":false},
+  {"laptopNumber":"09","endpointId":"","friendlyName":"Laptop #09","role":"Legacy Worker","notes":"","protected":false},
+  {"laptopNumber":"10","endpointId":"","friendlyName":"Laptop #10","role":"Legacy Worker","notes":"","protected":false}
+]
