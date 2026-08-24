@@ -34,7 +34,7 @@ class Action1Client:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             method="POST",
         )
-        data = self._open_json(req)
+        data = self._request_with_retry(req)
         token = data.get("access_token")
         if not token:
             raise Action1Error("Action1 authentication response did not include an access_token.")
@@ -47,21 +47,30 @@ class Action1Client:
             raise Action1Error("The Action1 token has expired. Reconnect; DadLAN does not persist the Client Secret.")
 
     @staticmethod
-    def _open_json(req: urllib.request.Request) -> dict:
-        try:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                raw = response.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
+    def _request_with_retry(req: urllib.request.Request, max_retries=3) -> dict:
+        for attempt in range(max_retries):
             try:
-                detail = json.loads(body)
-                detail_text = detail.get("message") or detail.get("error_description") or body
-            except Exception:
-                detail_text = body
-            raise Action1Error(f"Action1 HTTP {exc.code}: {detail_text}") from exc
-        except urllib.error.URLError as exc:
-            raise Action1Error(f"Could not reach Action1: {exc.reason}") from exc
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    raw = response.read().decode("utf-8")
+                    return json.loads(raw) if raw else {}
+            except urllib.error.HTTPError as exc:
+                if exc.code == 429:
+                    retry_after = exc.headers.get("Retry-After")
+                    sleep_time = int(retry_after) if retry_after and retry_after.isdigit() else (attempt + 1) * 2
+                    time.sleep(sleep_time)
+                    continue
+                body = exc.read().decode("utf-8", errors="replace")
+                try:
+                    detail = json.loads(body)
+                    detail_text = detail.get("message") or detail.get("error_description") or body
+                except Exception:
+                    detail_text = body
+                raise Action1Error(f"Action1 HTTP {exc.code}: {detail_text}") from exc
+            except urllib.error.URLError as exc:
+                if attempt == max_retries - 1:
+                    raise Action1Error(f"Could not reach Action1: {exc.reason}") from exc
+                time.sleep((attempt + 1) * 2)
+        raise Action1Error("Max retries exceeded for Action1 request.")
 
     def get(self, path_or_url: str, params: Optional[Dict[str, str]] = None) -> dict:
         self._ensure_token()
@@ -70,14 +79,14 @@ class Action1Client:
             query = urllib.parse.urlencode(params)
             url += ("&" if "?" in url else "?") + query
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self._access_token}", "Accept": "application/json"}, method="GET")
-        return self._open_json(req)
+        return self._request_with_retry(req)
 
     def post(self, path_or_url: str, payload: dict) -> dict:
         self._ensure_token()
         url = path_or_url if path_or_url.startswith(("http://", "https://")) else f"{self.base_url}/{path_or_url.lstrip('/')}"
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers={"Authorization": f"Bearer {self._access_token}", "Accept": "application/json", "Content-Type": "application/json"}, method="POST")
-        return self._open_json(req)
+        return self._request_with_retry(req)
 
     def _paged_items(self, path: str, params: Optional[Dict[str, str]] = None) -> List[dict]:
         items: List[dict] = []
@@ -99,12 +108,23 @@ class Action1Client:
     def endpoint(self, org_id: str, endpoint_id: str) -> dict:
         return self.get(f"endpoints/managed/{urllib.parse.quote(org_id, safe='')}/{urllib.parse.quote(endpoint_id, safe='')}", {"fields": "*"})
 
-    def run_script(self, org_id: str, endpoint_id: str, script_content: str) -> dict:
+    def run_script(self, org_id: str, endpoint_id: str, script_content: str, name: str = "DadLAN Automation") -> dict:
         return self.post(f"automations/instances/{urllib.parse.quote(org_id, safe='')}", {
-            "action": "run_script",
-            "endpoints": [endpoint_id],
-            "script": script_content
+            "name": name,
+            "retry_minutes": 0,
+            "actions": [
+                {
+                    "template_id": "run_script",
+                    "params": {
+                        "script": script_content
+                    }
+                }
+            ],
+            "endpoints": [endpoint_id]
         })
+
+    def stop_automation(self, org_id: str, instance_id: str) -> dict:
+        return self.post(f"automations/instances/{urllib.parse.quote(org_id, safe='')}/{urllib.parse.quote(instance_id, safe='')}/stop", {})
 
     def automation_endpoint_results(self, org_id: str, instance_id: str) -> List[dict]:
         return self._paged_items(f"automations/instances/{urllib.parse.quote(org_id, safe='')}/{urllib.parse.quote(instance_id, safe='')}/endpoint-results")

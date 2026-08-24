@@ -62,6 +62,7 @@ class DadLANApp(tk.Tk):
         self.endpoints: list[dict] = []
         self.metadata: dict[str, MachineMeta] = {}
         self.busy = False
+        self.current_instance_id = None
         self._load_metadata()
         self._build_ui()
         self._activity("System", "Startup", "Info", "Fedora/Linux dashboard ready.")
@@ -240,7 +241,9 @@ class DadLANApp(tk.Tk):
         if not endpoint:
             self.details.insert("end",f"{len(self.tree.selection())} endpoints selected." if len(self.tree.selection())>1 else "Select an endpoint to view details."); self.edit_button.configure(state="disabled"); self.diag_button.configure(state="disabled"); self.snapshot_button.configure(state="disabled"); self.details.configure(state="disabled"); return
         meta=self._meta_for(endpoint); health=self._health(endpoint); lines=[f"Laptop #{meta.laptopNumber}",meta.friendlyName,"",("PROTECTED CONTROLLER" if meta.protected else ""),"",f"Health: {health}",f"Role: {meta.role}",f"Status: {endpoint.get('status','')}",f"OS: {endpoint.get('OS','')}",f"IP: {endpoint.get('address','')}",f"Last Seen: {endpoint.get('last_seen','')}",f"Agent: {endpoint.get('agent_version','')}","",f"Endpoint Name:\n{endpoint.get('name','')}","",f"Endpoint ID:\n{endpoint.get('id','')}","",f"Notes:\n{meta.notes}"]
-        self.details.insert("end","\n".join(lines)); self.details.configure(state="disabled"); self.edit_button.configure(state="normal"); self.diag_button.configure(state="normal"); self.snapshot_button.configure(state="normal" if not meta.protected else "disabled")
+        self.details.insert("end","\n".join(lines)); self.details.configure(state="disabled"); self.edit_button.configure(state="normal"); self.diag_button.configure(state="normal")
+        can_run = (not meta.protected) and (meta.role == "Worker") and (meta.laptopNumber != "01")
+        self.snapshot_button.configure(state="normal" if can_run else "disabled")
 
     def edit_metadata(self):
         endpoint=self._selected_endpoint()
@@ -277,8 +280,8 @@ class DadLANApp(tk.Tk):
         if not endpoint or not self.client or not self.org_id or self.busy:return
         
         meta=self._meta_for(endpoint)
-        if meta.protected:
-            messagebox.showwarning("DadLAN", "Cannot run actions on a protected machine.", parent=self)
+        if meta.protected or meta.role != "Worker" or meta.laptopNumber == "01":
+            messagebox.showwarning("DadLAN", "Cannot run actions on protected machines, controllers, or non-workers.", parent=self)
             return
 
         try:
@@ -302,16 +305,30 @@ class DadLANApp(tk.Tk):
 
         self._set_busy(True);started=time.monotonic()
         
+        self.snapshot_button.configure(text="Cancel Action", command=lambda: self.cancel_action(endpoint_name, started))
+        self.current_instance_id = None
+        
         self._activity(endpoint_name, diag['name'], "Queued", f"Requesting execution of {diag['name']}...")
 
         def worker():
             try:
-                res = self.client.run_script(self.org_id, endpoint_id, diag['script'])
+                res = self.client.run_script(self.org_id, endpoint_id, diag['script'], name=f"DadLAN: {diag['name']}")
                 instance_id = str(res.get("id", ""))
+                self.current_instance_id = instance_id
                 self.after(0, lambda: self._poll_action_result(endpoint_name, endpoint_id, instance_id, diag, started))
             except Exception as exc:
                 self.after(0,lambda:self._action_failed(endpoint_name, diag['name'], exc, started))
         threading.Thread(target=worker,daemon=True).start()
+
+    def cancel_action(self, endpoint_name, started):
+        if not self.current_instance_id: return
+        self.snapshot_button.configure(state="disabled", text="Cancelling...")
+        self._activity(endpoint_name, "Cancel", "Running", f"Stopping instance {self.current_instance_id}...")
+        def worker():
+            try:
+                self.client.stop_automation(self.org_id, self.current_instance_id)
+            except Exception: pass
+        threading.Thread(target=worker, daemon=True).start()
 
     def _poll_action_result(self, endpoint_name, endpoint_id, instance_id, diag, started):
         if not instance_id:
@@ -321,14 +338,14 @@ class DadLANApp(tk.Tk):
         self._activity(endpoint_name, diag['name'], "Running", f"Created instance {instance_id}. Polling for results...")
         
         def worker():
-            max_attempts = 15 # 1.25 minutes max
+            max_attempts = 24 # 2 minutes max
             for _ in range(max_attempts):
                 try:
                     results = self.client.automation_endpoint_results(self.org_id, instance_id)
                     ep_res = next((r for r in results if str(r.get("endpoint_id")) == endpoint_id), None)
                     if ep_res:
                         status = str(ep_res.get("status", ""))
-                        if status.lower() in ("completed", "failed", "success"):
+                        if status.lower() in ("success", "warning", "error", "stopped"):
                             details = self.client.automation_endpoint_details(self.org_id, instance_id, endpoint_id)
                             self.after(0, lambda d=details, s=status: self._action_completed(endpoint_name, instance_id, s, d, diag, started))
                             return
@@ -336,10 +353,13 @@ class DadLANApp(tk.Tk):
                     pass
                 time.sleep(5)
             self.after(0, lambda: self._action_failed(endpoint_name, diag['name'], Exception("Polling timeout reached."), started))
+            try: self.client.stop_automation(self.org_id, instance_id)
+            except: pass
         threading.Thread(target=worker,daemon=True).start()
 
     def _action_completed(self, endpoint_name, instance_id, status, details, diag, started):
         self._set_busy(False)
+        self.snapshot_button.configure(text="Remote Action: System Snapshot", command=lambda: self.run_remote_action("system_snapshot"))
         duration = f"{int((time.monotonic()-started)*1000)} ms"
         
         raw_output = details.get("output", details.get("result", ""))
@@ -349,7 +369,7 @@ class DadLANApp(tk.Tk):
         except Exception:
             output = raw_output
 
-        self._activity(endpoint_name, diag['name'], "Success" if status.lower() in ("completed", "success") else "Failed", f"Instance: {instance_id}", duration)
+        self._activity(endpoint_name, diag['name'], status.capitalize(), f"Instance: {instance_id}", duration)
         log_action(endpoint_name, diag['name'], instance_id, status, duration, output)
         
         self.details.configure(state="normal")
@@ -358,6 +378,7 @@ class DadLANApp(tk.Tk):
 
     def _action_failed(self, endpoint_name, action_name, exc, started):
         self._set_busy(False)
+        self.snapshot_button.configure(text="Remote Action: System Snapshot", command=lambda: self.run_remote_action("system_snapshot"))
         duration = f"{int((time.monotonic()-started)*1000)} ms"
         self._activity(endpoint_name, action_name, "Failed", str(exc), duration)
         log_action(endpoint_name, action_name, "", "Error", duration, str(exc))

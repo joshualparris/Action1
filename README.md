@@ -1,6 +1,6 @@
 # DadLAN Action1 Command Centre
 
-DadLAN is a small fleet dashboard for managing a lab of Action1-managed computers. The current release is deliberately **read-only**: it connects to Action1, lists endpoints, applies local roles/metadata, filters the fleet, and retrieves endpoint diagnostics without changing remote machines.
+DadLAN is a small fleet dashboard for managing a lab of Action1-managed computers. 
 
 Two front ends are included:
 
@@ -9,7 +9,7 @@ Two front ends are included:
 
 ## Current status
 
-Version: **v0.2.2 — Fleet Grid & Layout Fix**
+Version: **v0.3.0 — Safe Remote Diagnostics**
 
 Implemented:
 
@@ -22,18 +22,18 @@ Implemented:
 - protected controller metadata
 - search and fleet filters
 - endpoint details
-- read-only diagnostics
-- local activity log
-- local metadata persistence
-- Safe Test Mode / no remote-changing actions
+- Action1 REST API payload construction and execution
+- **System Snapshot** remote diagnostic execution
+- SQLite job history
+- Local metadata persistence
+- Worker-only targeting for remote actions (Controllers explicitly blocked)
 
 Not implemented yet:
 
-- remote PowerShell/scripts
+- arbitrary remote PowerShell/scripts
 - reboot/shutdown
 - software deployment
-- Action1 automations
-- bulk write actions
+- multi-endpoint bulk write actions
 
 ## Security
 
@@ -41,7 +41,7 @@ Not implemented yet:
 
 The Windows and Fedora apps prompt for credentials at runtime and do not persist the Client Secret. Local fleet metadata is also ignored by Git because it can contain endpoint IDs and hostnames.
 
-For this read-only release, use an Action1 API credential with the minimum permissions needed to view endpoints.
+For v0.3, the API credential must have permissions sufficient to run scripts (`Use Scripts`) in Action1.
 
 ## Windows
 
@@ -100,6 +100,10 @@ Local metadata is stored under:
 ```text
 ~/.config/dadlan/machines.json
 ```
+History DB is stored under:
+```text
+~/.local/share/dadlan/history.db
+```
 
 ### Optional Client ID environment variable
 
@@ -132,6 +136,7 @@ When an endpoint name contains `Laptop #01` through `Laptop #10`, DadLAN automat
 - `#09`–`#10` → Legacy Worker
 
 Manual metadata edits are kept locally and are not written back to Action1.
+Laptop #01 and protected endpoints are strictly blocked from receiving remote execution actions.
 
 ## Repository structure
 
@@ -141,6 +146,10 @@ windows/
   Setup-Action1Controller.ps1
 fedora/
   dadlan.py
+  action1_client.py
+  diagnostics.py
+  database.py
+  test_dadlan.py
   install-fedora.sh
 config/
   DadLAN-Machines.example.json
@@ -149,18 +158,12 @@ docs/
   SECURITY-NOTES.md
 ```
 
-## Why two implementations?
-
-WinForms is Windows-only. Keeping the Windows dashboard on `PSAction1` preserves the working setup, while the Fedora version uses Action1's documented OAuth 2.0 REST API and gives the project a genuinely cross-platform path.
-
 ## Next milestone
 
-v0.3 will focus on **safe remote execution**:
+v0.4 will focus on **fleet operations**:
 
-1. one pre-defined, read-only diagnostic action
-2. one explicitly selected worker
-3. result collection and history
-4. protected controller exclusion
-5. confirmations and dry-run behaviour
-
-Arbitrary scripts and fleet-wide write actions should come later.
+1. multi-select jobs
+2. bounded concurrency
+3. reboot with confirmation
+4. software install from approved packages
+5. ForgeGrid deployment/update workflow
