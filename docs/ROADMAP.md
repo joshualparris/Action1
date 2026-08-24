@@ -16,14 +16,14 @@
 
 Goal: prove the full Action1 → endpoint → result loop without opening arbitrary scripting.
 
-- [ ] pre-defined diagnostic jobs only
-- [ ] target exactly one selected worker initially
-- [ ] block protected endpoints
-- [ ] show target + command summary before execution
-- [ ] collect stdout/stderr/status/timing
-- [ ] job history panel
-- [ ] API rate-limit handling
-- [ ] timeout/cancel handling
+- [x] pre-defined diagnostic jobs only
+- [x] target exactly one selected worker initially
+- [x] block protected endpoints
+- [x] show target + command summary before execution
+- [x] collect stdout/stderr/status/timing
+- [x] SQLite job history
+- [x] API rate-limit handling (via retry loop / polling intervals)
+- [x] timeout/cancel handling
 - [ ] expand from one worker to selected workers only after validation
 
 Suggested first diagnostics:

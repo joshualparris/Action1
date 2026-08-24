@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""DadLAN Command Centre v0.2.2 for Fedora/Linux.
+"""DadLAN Command Centre v0.3.0 for Fedora/Linux.
 
-Read-only Action1 fleet dashboard using the official Action1 REST API.
+Action1 fleet dashboard using the official Action1 REST API.
 No Action1 credentials or access tokens are persisted to disk.
 """
 
@@ -12,110 +12,23 @@ import os
 import re
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-APP_VERSION = "v0.2.2"
-REGIONS = {
-    "Australia": "https://app.au.action1.com/api/3.0",
-    "Europe": "https://app.eu.action1.com/api/3.0",
-    "NorthAmerica": "https://app.action1.com/api/3.0",
-    "NorthAmerica-2": "https://app.na-2.action1.com/api/3.0",
-}
+from action1_client import Action1Client, Action1Error, REGIONS
+from database import init_db, log_action, get_history
+from diagnostics import get_diagnostic
 
+init_db()
+
+APP_VERSION = "v0.3.0"
 
 def config_path() -> Path:
     root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "dadlan"
     root.mkdir(parents=True, exist_ok=True)
     return root / "machines.json"
-
-
-class Action1Error(RuntimeError):
-    pass
-
-
-class Action1Client:
-    def __init__(self, region: str, client_id: str, client_secret: str):
-        if region not in REGIONS:
-            raise Action1Error(f"Unsupported region: {region}")
-        self.region = region
-        self.base_url = REGIONS[region]
-        self.client_id = client_id
-        self._client_secret = client_secret
-        self._access_token: str | None = None
-        self._token_expiry = 0.0
-
-    def authenticate(self) -> None:
-        payload = urllib.parse.urlencode({"client_id": self.client_id, "client_secret": self._client_secret}).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self.base_url}/oauth2/token",
-            data=payload,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            method="POST",
-        )
-        data = self._open_json(req)
-        token = data.get("access_token")
-        if not token:
-            raise Action1Error("Action1 authentication response did not include an access_token.")
-        self._access_token = token
-        self._token_expiry = time.time() + max(60, int(data.get("expires_in", 3600)) - 60)
-        self._client_secret = ""
-
-    def _ensure_token(self) -> None:
-        if not self._access_token or time.time() >= self._token_expiry:
-            raise Action1Error("The Action1 token has expired. Reconnect; DadLAN does not persist the Client Secret.")
-
-    @staticmethod
-    def _open_json(req: urllib.request.Request) -> dict:
-        try:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                raw = response.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            try:
-                detail = json.loads(body)
-                detail_text = detail.get("message") or detail.get("error_description") or body
-            except Exception:
-                detail_text = body
-            raise Action1Error(f"Action1 HTTP {exc.code}: {detail_text}") from exc
-        except urllib.error.URLError as exc:
-            raise Action1Error(f"Could not reach Action1: {exc.reason}") from exc
-
-    def get(self, path_or_url: str, params: dict[str, str] | None = None) -> dict:
-        self._ensure_token()
-        url = path_or_url if path_or_url.startswith(("http://", "https://")) else f"{self.base_url}/{path_or_url.lstrip('/')}"
-        if params:
-            query = urllib.parse.urlencode(params)
-            url += ("&" if "?" in url else "?") + query
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self._access_token}", "Accept": "application/json"}, method="GET")
-        return self._open_json(req)
-
-    def _paged_items(self, path: str, params: dict[str, str] | None = None) -> list[dict]:
-        items: list[dict] = []
-        url: str | None = path
-        first = True
-        while url:
-            page = self.get(url, params if first else None)
-            first = False
-            items.extend(page.get("items", []))
-            url = page.get("next_page") or None
-        return items
-
-    def organizations(self) -> list[dict]:
-        return self._paged_items("organizations", {"limit": "50"})
-
-    def endpoints(self, org_id: str) -> list[dict]:
-        return self._paged_items(f"endpoints/managed/{urllib.parse.quote(org_id, safe='')}", {"fields": "*", "limit": "50"})
-
-    def endpoint(self, org_id: str, endpoint_id: str) -> dict:
-        return self.get(f"endpoints/managed/{urllib.parse.quote(org_id, safe='')}/{urllib.parse.quote(endpoint_id, safe='')}", {"fields": "*"})
-
 
 @dataclass
 class MachineMeta:
@@ -137,11 +50,10 @@ class MachineMeta:
     def to_dict(self) -> dict:
         return self.__dict__.copy()
 
-
 class DadLANApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"DadLAN Command Centre {APP_VERSION} [SAFE TEST MODE]")
+        self.title(f"DadLAN Command Centre {APP_VERSION}")
         self.geometry("1500x900")
         self.minsize(1100, 720)
         self.client: Action1Client | None = None
@@ -152,7 +64,7 @@ class DadLANApp(tk.Tk):
         self.busy = False
         self._load_metadata()
         self._build_ui()
-        self._activity("System", "Startup", "Info", "Fedora/Linux read-only dashboard ready.")
+        self._activity("System", "Startup", "Info", "Fedora/Linux dashboard ready.")
 
     def _load_metadata(self) -> None:
         path = config_path()
@@ -204,6 +116,8 @@ class DadLANApp(tk.Tk):
         self.filter_list = tk.Listbox(left, exportselection=False, height=9); self.filter_list.pack(fill="both", expand=True); self.filter_list.bind("<<ListboxSelect>>", lambda _e: self._render_grid())
         for label in ("All", "Online", "Offline", "Controller", "Workers", "Legacy", "Problems"): self.filter_list.insert("end", label)
         self.filter_list.selection_set(0)
+        
+        ttk.Button(left, text="View History", command=self.view_history).pack(fill="x", pady=(10, 0))
 
         columns=("health","num","name","role","status","os","ip","last_seen","agent")
         self.tree=ttk.Treeview(centre,columns=columns,show="headings",selectmode="extended")
@@ -218,7 +132,9 @@ class DadLANApp(tk.Tk):
         buttons=ttk.Frame(right); buttons.pack(fill="x")
         self.edit_button=ttk.Button(buttons,text="Edit Metadata",command=self.edit_metadata,state="disabled"); self.edit_button.pack(side="left",fill="x",expand=True,padx=(0,4))
         self.diag_button=ttk.Button(buttons,text="Read Diagnostics",command=self.read_diagnostics,state="disabled"); self.diag_button.pack(side="left",fill="x",expand=True,padx=(4,0))
-        ttk.Label(right,text="[Safe Test Mode] Remote changes blocked.").pack(anchor="w",pady=(10,0))
+        
+        actions=ttk.Frame(right); actions.pack(fill="x", pady=(10, 0))
+        self.snapshot_button=ttk.Button(actions,text="Remote Action: System Snapshot",command=lambda: self.run_remote_action("system_snapshot"),state="disabled"); self.snapshot_button.pack(side="left",fill="x",expand=True)
 
         activity_frame=ttk.Frame(self,padding=(8,4,8,8)); activity_frame.grid(row=2,column=0,sticky="nsew"); ttk.Label(activity_frame,text="DadLAN Activity",font=("Sans",10,"bold")).pack(anchor="w")
         self.activity=ttk.Treeview(activity_frame,columns=("time","laptop","action","status","duration","details"),show="headings",height=7)
@@ -322,9 +238,9 @@ class DadLANApp(tk.Tk):
     def _show_selected_details(self):
         endpoint=self._selected_endpoint(); self.details.configure(state="normal"); self.details.delete("1.0","end")
         if not endpoint:
-            self.details.insert("end",f"{len(self.tree.selection())} endpoints selected." if len(self.tree.selection())>1 else "Select an endpoint to view details."); self.edit_button.configure(state="disabled"); self.diag_button.configure(state="disabled"); self.details.configure(state="disabled"); return
+            self.details.insert("end",f"{len(self.tree.selection())} endpoints selected." if len(self.tree.selection())>1 else "Select an endpoint to view details."); self.edit_button.configure(state="disabled"); self.diag_button.configure(state="disabled"); self.snapshot_button.configure(state="disabled"); self.details.configure(state="disabled"); return
         meta=self._meta_for(endpoint); health=self._health(endpoint); lines=[f"Laptop #{meta.laptopNumber}",meta.friendlyName,"",("PROTECTED CONTROLLER" if meta.protected else ""),"",f"Health: {health}",f"Role: {meta.role}",f"Status: {endpoint.get('status','')}",f"OS: {endpoint.get('OS','')}",f"IP: {endpoint.get('address','')}",f"Last Seen: {endpoint.get('last_seen','')}",f"Agent: {endpoint.get('agent_version','')}","",f"Endpoint Name:\n{endpoint.get('name','')}","",f"Endpoint ID:\n{endpoint.get('id','')}","",f"Notes:\n{meta.notes}"]
-        self.details.insert("end","\n".join(lines)); self.details.configure(state="disabled"); self.edit_button.configure(state="normal"); self.diag_button.configure(state="normal")
+        self.details.insert("end","\n".join(lines)); self.details.configure(state="disabled"); self.edit_button.configure(state="normal"); self.diag_button.configure(state="normal"); self.snapshot_button.configure(state="normal" if not meta.protected else "disabled")
 
     def edit_metadata(self):
         endpoint=self._selected_endpoint()
@@ -356,6 +272,111 @@ class DadLANApp(tk.Tk):
     def _diagnostics_failed(self,endpoint_name,exc,started):
         self._set_busy(False);self._activity(endpoint_name,"Read Diagnostics","Error",str(exc),f"{int((time.monotonic()-started)*1000)} ms");messagebox.showerror("Diagnostics failed",str(exc),parent=self)
 
+    def run_remote_action(self, diag_id: str):
+        endpoint=self._selected_endpoint()
+        if not endpoint or not self.client or not self.org_id or self.busy:return
+        
+        meta=self._meta_for(endpoint)
+        if meta.protected:
+            messagebox.showwarning("DadLAN", "Cannot run actions on a protected machine.", parent=self)
+            return
+
+        try:
+            diag = get_diagnostic(diag_id)
+        except ValueError as e:
+            messagebox.showerror("DadLAN", str(e), parent=self)
+            return
+
+        endpoint_id=str(endpoint.get("id"))
+        endpoint_name=str(endpoint.get("name",endpoint_id))
+
+        msg = f"Execute Remote Action on {endpoint_name}?\n\n"
+        msg += f"Target: {endpoint_name} (ID: {endpoint_id[:8]}...)\n"
+        msg += f"Role: {meta.role}\n"
+        msg += f"Action: {diag['name']}\n"
+        msg += f"Description: {diag['description']}\n\n"
+        msg += "This will create a one-shot Action1 automation."
+
+        if not messagebox.askyesno("DadLAN", msg, parent=self):
+            return
+
+        self._set_busy(True);started=time.monotonic()
+        
+        self._activity(endpoint_name, diag['name'], "Queued", f"Requesting execution of {diag['name']}...")
+
+        def worker():
+            try:
+                res = self.client.run_script(self.org_id, endpoint_id, diag['script'])
+                instance_id = str(res.get("id", ""))
+                self.after(0, lambda: self._poll_action_result(endpoint_name, endpoint_id, instance_id, diag, started))
+            except Exception as exc:
+                self.after(0,lambda:self._action_failed(endpoint_name, diag['name'], exc, started))
+        threading.Thread(target=worker,daemon=True).start()
+
+    def _poll_action_result(self, endpoint_name, endpoint_id, instance_id, diag, started):
+        if not instance_id:
+            self._action_failed(endpoint_name, diag['name'], Exception("No instance ID returned by Action1."), started)
+            return
+        
+        self._activity(endpoint_name, diag['name'], "Running", f"Created instance {instance_id}. Polling for results...")
+        
+        def worker():
+            max_attempts = 15 # 1.25 minutes max
+            for _ in range(max_attempts):
+                try:
+                    results = self.client.automation_endpoint_results(self.org_id, instance_id)
+                    ep_res = next((r for r in results if str(r.get("endpoint_id")) == endpoint_id), None)
+                    if ep_res:
+                        status = str(ep_res.get("status", ""))
+                        if status.lower() in ("completed", "failed", "success"):
+                            details = self.client.automation_endpoint_details(self.org_id, instance_id, endpoint_id)
+                            self.after(0, lambda d=details, s=status: self._action_completed(endpoint_name, instance_id, s, d, diag, started))
+                            return
+                except Exception:
+                    pass
+                time.sleep(5)
+            self.after(0, lambda: self._action_failed(endpoint_name, diag['name'], Exception("Polling timeout reached."), started))
+        threading.Thread(target=worker,daemon=True).start()
+
+    def _action_completed(self, endpoint_name, instance_id, status, details, diag, started):
+        self._set_busy(False)
+        duration = f"{int((time.monotonic()-started)*1000)} ms"
+        
+        raw_output = details.get("output", details.get("result", ""))
+        try:
+            parsed = json.loads(raw_output)
+            output = json.dumps(parsed, indent=2)
+        except Exception:
+            output = raw_output
+
+        self._activity(endpoint_name, diag['name'], "Success" if status.lower() in ("completed", "success") else "Failed", f"Instance: {instance_id}", duration)
+        log_action(endpoint_name, diag['name'], instance_id, status, duration, output)
+        
+        self.details.configure(state="normal")
+        self.details.insert("end", f"\n\n--- {diag['name'].upper()} RESULTS ---\n{output}\n")
+        self.details.configure(state="disabled")
+
+    def _action_failed(self, endpoint_name, action_name, exc, started):
+        self._set_busy(False)
+        duration = f"{int((time.monotonic()-started)*1000)} ms"
+        self._activity(endpoint_name, action_name, "Failed", str(exc), duration)
+        log_action(endpoint_name, action_name, "", "Error", duration, str(exc))
+        messagebox.showerror("Action failed", str(exc), parent=self)
+
+    def view_history(self):
+        dialog = tk.Toplevel(self); dialog.title("Job History"); dialog.transient(self); dialog.grab_set()
+        dialog.geometry("800x400")
+        
+        columns = ("timestamp", "target", "action", "status", "duration")
+        tree = ttk.Treeview(dialog, columns=columns, show="headings")
+        headings = {"timestamp": ("Time", 140), "target": ("Target", 150), "action": ("Action", 150), "status": ("Status", 80), "duration": ("Duration", 100)}
+        for key, (title, width) in headings.items(): tree.heading(key, text=title); tree.column(key, width=width)
+        
+        y = ttk.Scrollbar(dialog, orient="vertical", command=tree.yview); tree.configure(yscrollcommand=y.set)
+        tree.pack(side="left", fill="both", expand=True); y.pack(side="right", fill="y")
+        
+        for row in get_history():
+            tree.insert("", "end", values=(row["timestamp"], row["target"], row["action"], row["status"], row["duration"]))
 
 if __name__ == "__main__":
     DadLANApp().mainloop()
