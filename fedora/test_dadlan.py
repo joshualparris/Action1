@@ -44,8 +44,35 @@ class TestDadLAN(unittest.TestCase):
         call_args = mock_urlopen.call_args[0][0]
         self.assertTrue(call_args.full_url.endswith("automations/instances/org1"))
         payload = json.loads(call_args.data.decode('utf-8'))
-        self.assertEqual(payload["actions"][0]["template_id"], "run_script")
-        self.assertEqual(payload["endpoints"], ["ep1"])
+        
+        expected_payload = {
+            "name": "DadLAN Automation",
+            "retry_minutes": "0",
+            "actions": [
+                {
+                    "name": "System Snapshot",
+                    "template_id": "run_script",
+                    "params": {
+                        "display_summary": "DadLAN System Snapshot",
+                        "run_script_params": [],
+                        "run_script_text": "echo 1",
+                        "run_script_language": "PowerShell",
+                        "success_exit_codes": "0",
+                        "reboot_options": {
+                            "auto_reboot": "no"
+                        },
+                        "platform": "Windows"
+                    }
+                }
+            ],
+            "endpoints": [
+                {
+                    "id": "ep1",
+                    "type": "Endpoint"
+                }
+            ]
+        }
+        self.assertEqual(payload, expected_payload)
 
     def test_safety_controller_protection(self):
         from dadlan import MachineMeta, DadLANApp

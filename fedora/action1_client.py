@@ -111,16 +111,30 @@ class Action1Client:
     def run_script(self, org_id: str, endpoint_id: str, script_content: str, name: str = "DadLAN Automation") -> dict:
         return self.post(f"automations/instances/{urllib.parse.quote(org_id, safe='')}", {
             "name": name,
-            "retry_minutes": 0,
+            "retry_minutes": "0",
             "actions": [
                 {
+                    "name": "System Snapshot",
                     "template_id": "run_script",
                     "params": {
-                        "script": script_content
+                        "display_summary": "DadLAN System Snapshot",
+                        "run_script_params": [],
+                        "run_script_text": script_content,
+                        "run_script_language": "PowerShell",
+                        "success_exit_codes": "0",
+                        "reboot_options": {
+                            "auto_reboot": "no"
+                        },
+                        "platform": "Windows"
                     }
                 }
             ],
-            "endpoints": [endpoint_id]
+            "endpoints": [
+                {
+                    "id": endpoint_id,
+                    "type": "Endpoint"
+                }
+            ]
         })
 
     def stop_automation(self, org_id: str, instance_id: str) -> dict:

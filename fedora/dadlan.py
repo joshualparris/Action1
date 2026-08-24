@@ -305,7 +305,7 @@ class DadLANApp(tk.Tk):
 
         self._set_busy(True);started=time.monotonic()
         
-        self.snapshot_button.configure(text="Cancel Action", command=lambda: self.cancel_action(endpoint_name, started))
+        self.snapshot_button.configure(text="Submitting...", state="disabled", command=lambda: self.cancel_action(endpoint_name, started))
         self.current_instance_id = None
         
         self._activity(endpoint_name, diag['name'], "Queued", f"Requesting execution of {diag['name']}...")
@@ -315,6 +315,7 @@ class DadLANApp(tk.Tk):
                 res = self.client.run_script(self.org_id, endpoint_id, diag['script'], name=f"DadLAN: {diag['name']}")
                 instance_id = str(res.get("id", ""))
                 self.current_instance_id = instance_id
+                self.after(0, lambda: self.snapshot_button.configure(text="Cancel Action", state="normal"))
                 self.after(0, lambda: self._poll_action_result(endpoint_name, endpoint_id, instance_id, diag, started))
             except Exception as exc:
                 self.after(0,lambda:self._action_failed(endpoint_name, diag['name'], exc, started))
