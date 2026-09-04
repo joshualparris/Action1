@@ -111,7 +111,7 @@ class Action1Client:
     def run_script(self, org_id: str, endpoint_id: str, script_content: str, name: str = "DadLAN Automation") -> dict:
         return self.post(f"automations/instances/{urllib.parse.quote(org_id, safe='')}", {
             "name": name,
-            "retry_minutes": "0",
+            "retry_minutes": "5",
             "actions": [
                 {
                     "name": "System Snapshot",
@@ -121,6 +121,8 @@ class Action1Client:
                         "run_script_params": [],
                         "run_script_text": script_content,
                         "run_script_language": "PowerShell",
+                        "condition_script_language": "PowerShell",
+                        "condition_script_text": "",
                         "success_exit_codes": "0",
                         "reboot_options": {
                             "auto_reboot": "no"
