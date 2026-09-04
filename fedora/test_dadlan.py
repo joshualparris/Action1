@@ -47,7 +47,7 @@ class TestDadLAN(unittest.TestCase):
         
         expected_payload = {
             "name": "DadLAN Automation",
-            "retry_minutes": "0",
+            "retry_minutes": "5",
             "actions": [
                 {
                     "name": "System Snapshot",
@@ -57,6 +57,8 @@ class TestDadLAN(unittest.TestCase):
                         "run_script_params": [],
                         "run_script_text": "echo 1",
                         "run_script_language": "PowerShell",
+                        "condition_script_language": "PowerShell",
+                        "condition_script_text": "",
                         "success_exit_codes": "0",
                         "reboot_options": {
                             "auto_reboot": "no"
